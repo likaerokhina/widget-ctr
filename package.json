@@ -1,0 +1,19 @@
+{
+  "name": "widget-ctr-test",
+  "version": "1.0.0",
+  "description": "Синтетический тест для виджета Playgama",
+  "main": "test_widget.ts",
+  "scripts": {
+    "test": "ts-node test_widget.ts",
+    "build": "tsc",
+    "install-playwright": "playwright install"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+} 
