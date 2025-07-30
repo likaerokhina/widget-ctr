@@ -164,7 +164,6 @@ class WidgetTester {
       const clickRequests: ClickRequest[] = [];
       const analyticsEvents: AnalyticsEvent[] = [];
       
-      // Настройка отслеживания запросов
       page.on('request', (request: Request) => {
         const url = request.url();
         const method = request.method();
@@ -192,7 +191,6 @@ class WidgetTester {
         }
       });
 
-      // Отслеживаем iframe
       page.on('frameattached', frame => {
         console.log(`Тест ${testNum}: Присоединен iframe: ${frame.url()}`);
       });
@@ -271,7 +269,6 @@ class WidgetTester {
   async runTests(): Promise<void> {
     this._results.startTime = new Date();
     
-    // Вычисляем общее количество запланированных кликов
     const totalPlannedClicks = this._numTests;
     console.log(`Начинаю тестирование: ${this._numTests} тестов, ${totalPlannedClicks} запланированных кликов`);
 
