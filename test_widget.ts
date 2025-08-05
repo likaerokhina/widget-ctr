@@ -11,9 +11,7 @@ import * as fs from 'fs';
 const WIDGET_SELECTOR = '#widget-playgama';
 const ANALYTICS_URLS = ['analytics', 'playgama', 'google-analytics', 'gtag', 'collect'];
 const CLICK_TIMEOUT = 2000;
-const WIDGET_TIMEOUT = 10000;
-const PAGE_TIMEOUT = 15000;
-const TEST_DELAY = 3000;
+const PAGE_TIMEOUT = 30000;
 
 type TestResults = {
   totalTests: number;
@@ -66,11 +64,14 @@ type WidgetInfo = {
 class WidgetTester {
   private readonly _url: string;
   private readonly _numTests: number;
+  private readonly _concurrency: number;
   private _results: TestResults;
+  private _resultsMutex = { locked: false };
 
-  constructor(url: string, numTests: number = 100) {
+  constructor(url: string, numTests: number = 100, concurrency: number = 5) {
     this._url = url;
     this._numTests = numTests;
+    this._concurrency = concurrency;
     this._results = this._initializeResults();
   }
 
@@ -112,6 +113,18 @@ class WidgetTester {
       console.log(`Тест ${testNum}: Не удалось распарсить аналитические данные: ${postData.substring(0, 100)}...`);
     }
     return null;
+  }
+
+  private async _updateResultsSafely(updateFn: () => void): Promise<void> {
+    while (this._resultsMutex.locked) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    this._resultsMutex.locked = true;
+    try {
+      updateFn();
+    } finally {
+      this._resultsMutex.locked = false;
+    }
   }
 
   private _trackAnalyticsEvent(eventName: string): void {
@@ -161,6 +174,7 @@ class WidgetTester {
     const page = await browser.newPage();
     
     try {
+      console.log(`Тест ${testNum}: Начинаю выполнение`);
       const clickRequests: ClickRequest[] = [];
       const analyticsEvents: AnalyticsEvent[] = [];
       
@@ -196,20 +210,24 @@ class WidgetTester {
       });
 
       console.log(`Тест ${testNum}: Загружаю страницу ${this._url}`);
-      await page.goto(this._url, { waitUntil: 'networkidle', timeout: PAGE_TIMEOUT });
+      await page.goto(this._url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
       
       try {
-        await page.waitForSelector(WIDGET_SELECTOR, { timeout: WIDGET_TIMEOUT });
+        await page.waitForSelector(WIDGET_SELECTOR, { timeout: 30000 });
         console.log(`Тест ${testNum}: Виджет найден`);
         
-        await page.waitForTimeout(1000);
+        // Увеличиваем задержку для полной загрузки виджета
+        console.log(`Тест ${testNum}: Ждем 5 секунд для полной загрузки виджета...`);
+        await page.waitForTimeout(5000);
         
         const widgetContent = await page.$eval(WIDGET_SELECTOR, el => el.innerHTML);
         console.log(`Тест ${testNum}: Контент виджета: ${widgetContent.substring(0, 100)}...`);
         
       } catch (error) {
         console.error(`Тест ${testNum}: Виджет не найден - ${error}`);
-        this._results.widgetNotFound++;
+        await this._updateResultsSafely(() => {
+          this._results.widgetNotFound++;
+        });
         return false;
       }
 
@@ -217,7 +235,17 @@ class WidgetTester {
 
       let successfulClicksInTest = 0;
       
-      const widgetInfo = await this._getWidgetInfo(page);
+      // Проверяем размер виджета и ждем полной загрузки
+      let widgetInfo = await this._getWidgetInfo(page);
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (widgetInfo && widgetInfo.height < 100 && attempts < maxAttempts) {
+        attempts++;
+        console.log(`Тест ${testNum}: Виджет слишком маленький (${widgetInfo.height}px), попытка ${attempts}/${maxAttempts}, ждем еще 3 секунды...`);
+        await page.waitForTimeout(3000);
+        widgetInfo = await this._getWidgetInfo(page);
+      }
       
       if (!widgetInfo) {
         console.log(`Тест ${testNum}: Виджет не найден`);
@@ -226,10 +254,19 @@ class WidgetTester {
 
       console.log(`Тест ${testNum}: Виджет найден, размеры: ${widgetInfo.width}x${widgetInfo.height}, позиция: (${widgetInfo.x}, ${widgetInfo.y})`);
       
+      if (widgetInfo.height < 100) {
+        console.log(`Тест ${testNum}: Виджет все еще слишком маленький (${widgetInfo.height}px), пропускаем клик`);
+        this._results.failedClicks++;
+        return false;
+      }
+      
       await page.mouse.click(widgetInfo.x, widgetInfo.y);
       console.log(`Тест ${testNum}: Клик по центру виджета выполнен`);
       
-      await page.waitForTimeout(CLICK_TIMEOUT);
+      // Увеличиваем задержку после клика для открытия модалки
+      console.log(`Тест ${testNum}: Ждем 5 секунд после клика для открытия модалки...`);
+
+      await page.waitForTimeout(5000);
       
       // Проверяем появление iframe после клика
       const hasIframe = await this._checkIframeElements(page);
@@ -243,14 +280,19 @@ class WidgetTester {
 
       if (successfulClicksInTest > 0) {
         console.log(`Тест ${testNum}: Успешных кликов: ${successfulClicksInTest}`);
-        this._results.successfulClicks += successfulClicksInTest;
+        await this._updateResultsSafely(() => {
+          this._results.successfulClicks += successfulClicksInTest;
+        });
       } else {
         console.log(`Тест ${testNum}: Успешных кликов: 0`);
-        this._results.failedClicks++;
+        await this._updateResultsSafely(() => {
+          this._results.failedClicks++;
+        });
       }
       
       // Выводим информацию об аналитических событиях
       console.log(`Тест ${testNum}: Аналитических событий: ${analyticsEvents.length}`);
+
       analyticsEvents.forEach(event => {
         console.log(`  - ${event.eventName}: ${JSON.stringify(event)}`);
       });
@@ -259,7 +301,10 @@ class WidgetTester {
       
     } catch (error) {
       console.error(`Тест ${testNum}: Ошибка загрузки страницы - ${error}`);
-      this._results.pageLoadErrors++;
+
+      await this._updateResultsSafely(() => {
+        this._results.pageLoadErrors++;
+      });
       return false;
     } finally {
       await page.close();
@@ -270,22 +315,55 @@ class WidgetTester {
     this._results.startTime = new Date();
     
     const totalPlannedClicks = this._numTests;
-    console.log(`Начинаю тестирование: ${this._numTests} тестов, ${totalPlannedClicks} запланированных кликов`);
+    console.log(`Начинаю параллельное тестирование: ${this._numTests} тестов, ${totalPlannedClicks} запланированных кликов, параллельность: ${this._concurrency}`);
 
-    const browser = await chromium.launch({ 
-      headless: false,
-      slowMo: 1000
-    });
+    // Создаем пул браузеров
+    const browsers: Browser[] = [];
+
+    for (let i = 0; i < this._concurrency; i++) {
+      const browser = await chromium.launch({ 
+        headless: true,
+        slowMo: 1000
+      });
+      browsers.push(browser);
+    }
     
     try {
+      const testPromises: Promise<void>[] = [];
+      let completedTests = 0;
+      
       for (let i = 1; i <= this._numTests; i++) {
-        this._results.totalTests++;
-        await this.runSingleTest(browser, i);
+        // Ждем, если достигли лимита параллельности
+        while (testPromises.length >= this._concurrency) {
+          await Promise.race(testPromises);
+          // Удаляем завершенные промисы
+          testPromises.length = 0;
+        }
         
-        await new Promise(resolve => setTimeout(resolve, TEST_DELAY));
+        // Выбираем браузер для теста
+        const browserIndex = i % this._concurrency;
+        const browser = browsers[browserIndex];
+        
+        // Запускаем новый тест
+        const testPromise = this._runTestWithBrowser(browser, i).then(() => {
+          completedTests++;
+          console.log(`Прогресс: ${completedTests}/${this._numTests} тестов завершено`);
+        });
+        
+        testPromises.push(testPromise);
+        
+        // Минимальная задержка между запусками тестов
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
+      
+      // Ждем завершения всех оставшихся тестов
+      await Promise.all(testPromises);
+      
     } finally {
-      await browser.close();
+      // Закрываем все браузеры
+      for (const browser of browsers) {
+        await browser.close();
+      }
     }
     
     this._results.endTime = new Date();
@@ -293,6 +371,13 @@ class WidgetTester {
     
     this._printResults();
     this.saveResults();
+  }
+
+  private async _runTestWithBrowser(browser: Browser, testNum: number): Promise<void> {
+    await this._updateResultsSafely(() => {
+      this._results.totalTests++;
+    });
+    await this.runSingleTest(browser, testNum);
   }
 
   _printResults(): void {
@@ -348,9 +433,9 @@ class WidgetTester {
 }
 
 async function main(): Promise<void> {
-  const testUrl = "https://widget-ctr.vercel.app";
+  const testUrl = "https://widget-exsdd5nj6-likas-projects-565217d4.vercel.app";
   
-  const tester = new WidgetTester(testUrl, 10);
+  const tester = new WidgetTester(testUrl, 100, 5);
   await tester.runTests();
 }
 

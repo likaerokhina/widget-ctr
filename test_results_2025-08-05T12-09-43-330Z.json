@@ -1,0 +1,21 @@
+{
+  "totalTests": 100,
+  "successfulClicks": 40,
+  "failedClicks": 0,
+  "pageLoadErrors": 0,
+  "widgetNotFound": 60,
+  "testDuration": 482.182,
+  "startTime": "2025-08-05T12:01:41.147Z",
+  "endTime": "2025-08-05T12:09:43.329Z",
+  "analyticsEvents": {
+    "success_load_content": 40,
+    "error_load_content": 0,
+    "widget_impression": 40,
+    "click_widget": 40,
+    "close_modal": 0,
+    "game_impression": 160,
+    "click_game": 40
+  },
+  "successRate": 40,
+  "plannedClicks": 100
+}
