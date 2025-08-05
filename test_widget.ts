@@ -433,7 +433,7 @@ class WidgetTester {
 }
 
 async function main(): Promise<void> {
-  const testUrl = "https://widget-exsdd5nj6-likas-projects-565217d4.vercel.app";
+  const testUrl = "https://widget-kownijd0a-likas-projects-565217d4.vercel.app";
   
   const tester = new WidgetTester(testUrl, 100, 5);
   await tester.runTests();
